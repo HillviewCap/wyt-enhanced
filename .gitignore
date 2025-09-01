@@ -199,8 +199,6 @@ dist/
 # Local development
 .local/
 
-# Caddy
-Caddyfile
 
 # Miscellaneous
 *.orig
