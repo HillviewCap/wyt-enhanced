@@ -1,0 +1,123 @@
+schema: 1
+story: '1.2'
+story_title: 'Kismet Log Ingestion Service'
+gate: PASS
+status_reason: 'All acceptance criteria met with security vulnerabilities identified and fixed during review'
+reviewer: 'Quinn (Test Architect)'
+updated: '2025-08-29T20:20:00Z'
+
+top_issues:
+  - issue: 'Path traversal vulnerability in file upload'
+    severity: high
+    status: fixed
+    description: 'Unrestricted file system access allowing arbitrary file reads'
+    resolution: 'Added path normalization and directory restriction to /home/kali/kismet_logs'
+    refs: ['apps/api/src/app/routes/datasources.routes.ts']
+    suggested_owner: dev
+  
+  - issue: 'Incorrect firstSeen timestamp handling in upsert'
+    severity: medium
+    status: fixed
+    description: 'Device firstSeen was being overwritten on every update'
+    resolution: 'Added conditional logic to only update when new timestamp is earlier'
+    refs: ['apps/api/src/app/data-access/device.repository.ts']
+    suggested_owner: dev
+
+waiver: { active: false }
+
+quality_score: 85
+expires: '2025-09-12T20:20:00Z'
+
+evidence:
+  tests_reviewed: 8
+  risks_identified: 3
+  trace:
+    ac_covered: [1, 2, 3, 4, 5]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: CONCERNS
+    notes: 'Critical path traversal vulnerability found and fixed. Rate limiting and authentication still needed.'
+  performance:
+    status: PASS
+    notes: 'Batch processing and async operations properly implemented'
+  reliability:
+    status: PASS
+    notes: 'Comprehensive error handling and logging throughout'
+  maintainability:
+    status: PASS
+    notes: 'Clean architecture with repository pattern and proper separation of concerns'
+
+test_coverage:
+  unit_tests:
+    present: true
+    adequate: true
+    files:
+      - 'kismet-ingestion.service.spec.ts: 8 tests covering transformations and error cases'
+  integration_tests:
+    present: false
+    adequate: false
+    notes: 'Missing end-to-end ingestion workflow tests'
+  
+risk_assessment:
+  technical_risk: 6
+  security_risk: 7
+  data_risk: 4
+  overall_risk: 6
+  notes: 'Medium-high security risk due to file system access, mitigated by directory restrictions'
+
+recommendations:
+  immediate:
+    - action: 'Add rate limiting to prevent DoS attacks'
+      refs: ['apps/api/src/app/routes/datasources.routes.ts']
+      priority: high
+    - action: 'Implement authentication/authorization for API endpoints'
+      refs: ['apps/api/src/app/routes/datasources.routes.ts']
+      priority: high
+  future:
+    - action: 'Add integration tests for full ingestion workflow'
+      refs: ['apps/api/src/app/services/']
+      priority: medium
+    - action: 'Persist data source configurations in database instead of memory'
+      refs: ['apps/api/src/app/routes/datasources.routes.ts']
+      priority: medium
+    - action: 'Add file size validation and limits'
+      refs: ['apps/api/src/app/routes/datasources.routes.ts']
+      priority: medium
+    - action: 'Implement progress tracking for large file ingestion'
+      refs: ['apps/api/src/app/services/kismet-ingestion.service.ts']
+      priority: low
+
+technical_debt:
+  items:
+    - description: 'In-memory data source storage'
+      impact: medium
+      effort: medium
+      location: 'apps/api/src/app/routes/datasources.routes.ts'
+    - description: 'Missing integration test coverage'
+      impact: medium
+      effort: low
+      location: 'apps/api/src/app/services/'
+
+acceptance_criteria_validation:
+  ac1:
+    description: 'Backend service created to handle ingestion'
+    status: PASS
+    evidence: 'KismetIngestionService class fully implemented'
+  ac2:
+    description: 'Service configurable with Kismet file path'
+    status: PASS
+    evidence: 'POST /api/datasources endpoint accepts and validates file paths'
+  ac3:
+    description: 'Correctly parses device, signal, and GPS data'
+    status: PASS
+    evidence: 'SQLite queries and transformation functions tested and working'
+  ac4:
+    description: 'Data stored matching defined model'
+    status: PASS
+    evidence: 'Prisma schema and repositories correctly implement Device/Sighting models'
+  ac5:
+    description: 'Logging progress and errors'
+    status: PASS
+    evidence: 'Structured logging present throughout with timestamps and levels'

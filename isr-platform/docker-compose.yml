@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: isr-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-isr_db}
+      POSTGRES_USER: ${POSTGRES_USER:-isr_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-isr_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - isr-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U isr_user -d isr_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: isr-api
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${API_PORT:-3001}
+      DATABASE_URL: postgresql://isr_user:isr_password@postgres:5432/isr_db
+    volumes:
+      - /home/kali/kismet_logs:/home/kali/kismet_logs:ro
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - isr-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/isr-app/Dockerfile
+    container_name: isr-frontend
+    ports:
+      - "3000:80"
+    networks:
+      - isr-network
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.7-alpine
+    container_name: isr-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - frontend
+    networks:
+      - isr-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  isr-network:
+    driver: bridge
