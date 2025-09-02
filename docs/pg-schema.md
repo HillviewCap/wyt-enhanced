@@ -1,16 +1,19 @@
-# Kiz-Log-Buster Database Schema Documentation
+# ISR Platform Database Schema Documentation
 
 ## Overview
 
-This document describes the database schema for the Kiz-Log-Buster wireless monitoring system. The database stores normalized wireless intelligence data from Kismet captures, optimized for geospatial analysis, device tracking, and wardriving operations.
+This document describes the database schema for the ISR Platform (Intelligence, Surveillance, and Reconnaissance) wireless monitoring system. The database stores normalized wireless intelligence data from Kismet captures through the Kiz-log-buster processor pipeline, optimized for geospatial analysis, device tracking, and wardriving operations.
+
+**Data Pipeline**: Kismet SQLite Files → Kiz-log-buster Processor → PostgreSQL Database
 
 ## Database Information
 
 - **Database Name**: `isr_db`
-- **Database Type**: PostgreSQL 13+
+- **Database Type**: PostgreSQL 13+ with PostGIS extension
 - **Schema**: Enhanced for wireless intelligence and geospatial analysis
-- **Partitioning**: Monthly partitions for time-series data
-- **Indexes**: Optimized for geospatial queries and device lookups
+- **Partitioning**: Monthly partitions for time-series data (packets, device_locations, signal_measurements)
+- **Indexes**: BRIN indexes for time-series, GIN for JSONB, spatial indexes for geospatial queries
+- **Processing**: Automated Kiz-log-buster pipeline with deduplication and normalization
 
 ---
 
@@ -116,9 +119,59 @@ CREATE TABLE packets (
 
 ---
 
+## Processing Management Tables
+
+### 4. `processing_state` - File Processing Status
+
+Tracks Kismet file processing status and prevents duplicate processing.
+
+```sql
+CREATE TABLE processing_state (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    file_path TEXT NOT NULL UNIQUE,
+    file_name VARCHAR(255) NOT NULL,
+    file_size BIGINT,
+    file_hash VARCHAR(64),
+    processing_status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    error_message TEXT,
+    records_processed INTEGER DEFAULT 0,
+    records_skipped INTEGER DEFAULT 0,
+    metadata JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+**Status Values:**
+- `pending`: File queued for processing
+- `processing`: Currently being processed
+- `completed`: Successfully processed
+- `failed`: Processing failed
+- `skipped`: File skipped (already processed)
+
+**Metadata Example:**
+```json
+{
+  "datasources_processed": 2,
+  "devices_processed": 145,
+  "packets_processed": 8932,
+  "processing_duration_seconds": 12.456,
+  "processing_rate_mb_per_sec": 2.34,
+  "deduplication_stats": {
+    "total_processed": 8932,
+    "duplicates_found": 8023,
+    "deduplication_rate": 89.8
+  }
+}
+```
+
+---
+
 ## Enhanced Intelligence Tables
 
-### 4. `wifi_networks` - WiFi Access Points & Networks
+### 5. `wifi_networks` - WiFi Access Points & Networks
 
 Normalized WiFi network data for network intelligence.
 
@@ -156,7 +209,7 @@ CREATE TABLE wifi_networks (
 - Security posture analysis
 - Coverage area analysis
 
-### 5. `wifi_clients` - WiFi Client Devices
+### 6. `wifi_clients` - WiFi Client Devices
 
 Client devices and their network associations.
 
@@ -191,7 +244,7 @@ CREATE TABLE wifi_clients (
 - Network usage patterns
 - Device fingerprinting
 
-### 6. `bluetooth_devices` - Bluetooth & BLE Devices
+### 7. `bluetooth_devices` - Bluetooth & BLE Devices
 
 Bluetooth device intelligence data.
 
@@ -226,7 +279,7 @@ CREATE TABLE bluetooth_devices (
 - IoT device identification
 - Proximity analysis
 
-### 7. `bluetooth_services` - GATT Services & Characteristics
+### 8. `bluetooth_services` - GATT Services & Characteristics
 
 Bluetooth service advertisements and capabilities.
 
@@ -252,7 +305,7 @@ CREATE TABLE bluetooth_services (
 
 ## Time-Series Analytics Tables (Partitioned)
 
-### 8. `device_locations` - Device Movement Tracking
+### 9. `device_locations` - Device Movement Tracking
 
 Time-series location data for device movement analysis (monthly partitioned).
 
@@ -281,7 +334,7 @@ CREATE TABLE device_locations (
 - Speed and direction tracking
 - Historical location queries
 
-### 9. `signal_measurements` - Signal Strength Analysis
+### 10. `signal_measurements` - Signal Strength Analysis
 
 RSSI and signal measurements over time (monthly partitioned).
 
@@ -316,7 +369,7 @@ CREATE TABLE signal_measurements (
 
 ## Relationship Tables
 
-### 10. `network_associations` - Device-Network Relationships
+### 11. `network_associations` - Device-Network Relationships
 
 Tracks client-to-network associations over time.
 
@@ -339,7 +392,7 @@ CREATE TABLE network_associations (
 );
 ```
 
-### 11. `wardriving_sessions` - Collection Session Metadata
+### 12. `wardriving_sessions` - Collection Session Metadata
 
 Tracks wardriving collection sessions.
 
@@ -358,6 +411,65 @@ CREATE TABLE wardriving_sessions (
     metadata JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+```
+
+---
+
+## Data Processing Pipeline
+
+### Kiz-log-buster Components
+
+```
+Kismet SQLite Files (~/ kismet_logs/*.kismet)
+        ↓
+AutomatedKismetProcessor (Entry Point)
+        ↓
+File Discovery & State Check (processing_state table)
+        ↓
+KismetProcessor (Main Processing Engine)
+        ↓
+┌─────────────────┬─────────────────┬─────────────────┐
+│  DataExtractor  │ DataNormalizer  │PacketDeduplicator│
+└─────────────────┴─────────────────┴─────────────────┘
+        ↓
+DatabaseManager (Bulk Insert Operations)
+        ↓
+Partitioned PostgreSQL Storage
+```
+
+### Processing Features
+
+**Data Extraction:**
+- SQLite integrity validation with corruption recovery
+- Schema adaptation for Kismet version differences
+- Graceful handling of malformed JSON data
+
+**Data Normalization:**
+- MAC address standardization (xx:xx:xx:xx:xx:xx format)
+- GPS coordinate validation and extraction
+- Protocol-specific data organization
+- Timestamp standardization to TIMESTAMPTZ
+
+**Deduplication:**
+- SHA-256 hash-based packet deduplication
+- 30-second time window tolerance
+- ~90% deduplication rate in overlapping sensor coverage
+- Memory-efficient with automatic cleanup
+
+**Performance Optimizations:**
+- Bulk insert operations (5000 records/batch)
+- Stream processing with configurable batch sizes
+- WAL mode for SQLite concurrent access
+- Automatic monthly partition creation
+
+### Systemd Integration
+
+```bash
+# Service runs every 15 minutes via systemd timer
+Service: kiz-log-buster.service
+Timer: kiz-log-buster.timer
+Working Directory: /tmp/kismet_processing
+Logs: /tmp/kismet_processing/logs/
 ```
 
 ---
@@ -533,6 +645,21 @@ wifi_clients (1) ←→ (N) network_associations
 
 ## Performance Considerations
 
+### Processing State Indexes
+
+```sql
+-- Processing management indexes
+CREATE INDEX idx_processing_state_status 
+ON processing_state (processing_status);
+
+CREATE INDEX idx_processing_state_file_hash 
+ON processing_state (file_hash);
+
+CREATE INDEX idx_processing_state_completed 
+ON processing_state (completed_at) 
+WHERE processing_status = 'completed';
+```
+
 ### Indexes for Intelligence Queries
 
 ```sql
@@ -565,9 +692,34 @@ ON bluetooth_devices (bd_address);
 ### Partitioned Tables
 
 Monthly partitions are automatically created for:
-- `device_locations_YYYY_MM`
-- `signal_measurements_YYYY_MM`
-- `packets_YYYY_MM`
+- `packets_YYYY_MM` - Raw packet data
+- `device_locations_YYYY_MM` - Location tracking
+- `signal_measurements_YYYY_MM` - Signal analysis
+
+**Automatic Partition Creation Function:**
+```sql
+CREATE OR REPLACE FUNCTION create_monthly_partition()
+RETURNS void AS $$
+DECLARE
+    partition_name TEXT;
+    start_date DATE;
+    end_date DATE;
+BEGIN
+    start_date := DATE_TRUNC('month', CURRENT_DATE);
+    end_date := start_date + INTERVAL '1 month';
+    
+    -- Create packet partition
+    partition_name := 'packets_' || TO_CHAR(start_date, 'YYYY_MM');
+    EXECUTE format('CREATE TABLE IF NOT EXISTS %I PARTITION OF packets 
+                    FOR VALUES FROM (%L) TO (%L)', 
+                    partition_name, start_date, end_date);
+    
+    -- Create BRIN index on partition
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING BRIN (ts)', 
+                    partition_name || '_ts_idx', partition_name);
+END;
+$$ LANGUAGE plpgsql;
+```
 
 ---
 
@@ -599,8 +751,9 @@ psql -h 10.0.10.9 -p 5433 -U isr_user -d isr_db
 
 ---
 
-**Document Version**: 1.0  
+**Document Version**: 2.0  
 **Last Updated**: September 2, 2025  
-**Database Schema Version**: Enhanced v2.0 (Migrations 005-006)
+**Database Schema Version**: Enhanced v3.0 with Kiz-log-buster Integration  
+**Processor Version**: Kiz-log-buster v1.0
 
 For technical support or schema questions, contact the development team.

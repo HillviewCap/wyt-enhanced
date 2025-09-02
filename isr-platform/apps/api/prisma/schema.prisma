@@ -1,8 +1,6 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// ISR Platform Database Schema
+// Synchronized with Kiz-log-buster processor pipeline
+// Learn more: https://pris.ly/d/prisma-schema
 
 generator client {
   provider = "prisma-client-js"
@@ -13,43 +11,324 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ============================================
+// Core Tables (Base Kismet Data)
+// ============================================
+
+model Datasource {
+  id         String    @id @default(uuid()) @db.Uuid
+  uuid       String    @unique @db.Uuid
+  name       String    @db.VarChar(255)
+  definition String?   @db.Text
+  interface  String?   @db.VarChar(100)
+  type       String?   @db.VarChar(50)
+  hardware   String?   @db.VarChar(255)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("datasources")
+}
+
 model Device {
-  id              String           @id @default(uuid())
-  macAddress      String           @unique
-  firstSeen       DateTime
-  lastSeen        DateTime
-  sightings       Sighting[]
-  analysisResults AnalysisResult[]
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  id            String    @id @default(uuid()) @db.Uuid
+  key           String    @unique @db.VarChar(255)
+  macaddr       String?   @db.Inet // Using String for MAC address compatibility
+  phyname       String?   @db.VarChar(100)
+  devname       String?   @db.VarChar(100)
+  type          String?   @db.VarChar(50)
+  basicType     String?   @map("basic_type") @db.VarChar(50)
+  cryptSet      String?   @map("crypt_set") @db.Text
+  basicCryptSet String?   @map("basic_crypt_set") @db.VarChar(100)
+  firstTime     DateTime? @map("first_time") @db.Timestamptz(6)
+  lastTime      DateTime? @map("last_time") @db.Timestamptz(6)
+  packetsTotal  BigInt    @default(0) @map("packets_total")
+  packetsRx     BigInt    @default(0) @map("packets_rx")
+  packetsTx     BigInt    @default(0) @map("packets_tx")
+  dataSize      BigInt    @default(0) @map("data_size")
+  channel       String?   @db.VarChar(20)
+  frequency     Int?
+  manuf         String?   @db.VarChar(255)
+  model         String?   @db.VarChar(255)
+  serverUuid    String?   @map("server_uuid") @db.Uuid
+  latitude      Decimal?  @db.Decimal(10, 8)
+  longitude     Decimal?  @db.Decimal(11, 8)
+  altitude      Decimal?  @db.Decimal(8, 2)
+  minLatitude   Decimal?  @map("min_latitude") @db.Decimal(10, 8)
+  maxLatitude   Decimal?  @map("max_latitude") @db.Decimal(10, 8)
+  minLongitude  Decimal?  @map("min_longitude") @db.Decimal(11, 8)
+  maxLongitude  Decimal?  @map("max_longitude") @db.Decimal(11, 8)
+  location      Json?     @db.JsonB
+  signalData    Json?     @map("signal_data") @db.JsonB
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("devices")
 }
 
-model Sighting {
-  id             String   @id @default(uuid())
-  deviceId       String
-  device         Device   @relation(fields: [deviceId], references: [id])
-  timestamp      DateTime
-  latitude       Float
-  longitude      Float
-  signalStrength Float
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+// Note: Packets table is partitioned by month in PostgreSQL
+// Prisma doesn't directly support partitioned tables, so we'll interact with it via raw queries
+model Packet {
+  id            String    @id @default(uuid()) @db.Uuid
+  ts            DateTime  @db.Timestamptz(6)
+  deviceKey     String?   @map("device_key") @db.VarChar(255)
+  datasourceUuid String?  @map("datasource_uuid") @db.Uuid
+  packetType    String?   @map("packet_type") @db.VarChar(50)
+  subType       String?   @map("sub_type") @db.VarChar(50)
+  sourceMac     String?   @map("source_mac") @db.Inet
+  destMac       String?   @map("dest_mac") @db.Inet
+  bssid         String?   @db.Inet
+  size          Int?
+  frequency     Int?
+  channel       String?   @db.VarChar(20)
+  signalDbm     Int?      @map("signal_dbm")
+  noiseDbm      Int?      @map("noise_dbm")
+  snr           Decimal?  @db.Decimal(5, 2)
+  retry         Boolean   @default(false)
+  wep           Boolean   @default(false)
+  fragmented    Boolean   @default(false)
+  dataPayload   Bytes?    @map("data_payload")
+  dot11Info     Json?     @map("dot11_info") @db.JsonB
+  location      Json?     @db.JsonB
+  latitude      Decimal?  @db.Decimal(10, 8)
+  longitude     Decimal?  @db.Decimal(11, 8)
+  altitude      Decimal?  @db.Decimal(8, 2)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  @@index([deviceId])
+  @@index([ts])
+  @@index([deviceKey])
+  @@map("packets")
+}
+
+// ============================================
+// Processing Management Tables
+// ============================================
+
+model ProcessingState {
+  id                String    @id @default(uuid()) @db.Uuid
+  filePath          String    @unique @map("file_path") @db.Text
+  fileName          String    @map("file_name") @db.VarChar(255)
+  fileSize          BigInt?   @map("file_size")
+  fileHash          String?   @map("file_hash") @db.VarChar(64)
+  processingStatus  String    @default("pending") @map("processing_status") @db.VarChar(50)
+  startedAt         DateTime? @map("started_at") @db.Timestamptz(6)
+  completedAt       DateTime? @map("completed_at") @db.Timestamptz(6)
+  errorMessage      String?   @map("error_message") @db.Text
+  recordsProcessed  Int       @default(0) @map("records_processed")
+  recordsSkipped    Int       @default(0) @map("records_skipped")
+  metadata          Json?     @db.JsonB
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([processingStatus])
+  @@index([fileHash])
+  @@index([completedAt])
+  @@map("processing_state")
+}
+
+// ============================================
+// Enhanced Intelligence Tables
+// ============================================
+
+model WifiNetwork {
+  id               String                @id @default(uuid()) @db.Uuid
+  bssid            String                @unique @db.Inet
+  ssid             String?               @db.VarChar(32)
+  ssidHash         String?               @map("ssid_hash") @db.VarChar(64)
+  securityType     String?               @map("security_type") @db.VarChar(50)
+  encryption       String?               @db.VarChar(50)
+  channel          Int?
+  frequency        Int?
+  signalStrength   Int?                  @map("signal_strength")
+  firstSeen        DateTime?             @map("first_seen") @db.Timestamptz(6)
+  lastSeen         DateTime?             @map("last_seen") @db.Timestamptz(6)
+  timesSeen        Int                   @default(1) @map("times_seen")
+  vendor           String?               @db.VarChar(255)
+  location         Json?                 @db.JsonB
+  latitude         Decimal?              @db.Decimal(10, 8)
+  longitude        Decimal?              @db.Decimal(11, 8)
+  altitude         Decimal?              @db.Decimal(8, 2)
+  capabilities     String?               @db.Text
+  beaconInterval   Int?                  @map("beacon_interval")
+  dtimPeriod       Int?                  @map("dtim_period")
+  networkType      String?               @map("network_type") @db.VarChar(20)
+  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  
+  clients          WifiClient[]
+  associations     NetworkAssociation[]
+
+  @@index([lastSeen])
+  @@index([securityType])
+  @@index([latitude, longitude])
+  @@map("wifi_networks")
+}
+
+model WifiClient {
+  id              String                @id @default(uuid()) @db.Uuid
+  clientMac       String                @unique @map("client_mac") @db.Inet
+  networkBssid    String?               @map("network_bssid") @db.Inet
+  clientType      String?               @map("client_type") @db.VarChar(50)
+  associationType String?               @map("association_type") @db.VarChar(50)
+  firstSeen       DateTime?             @map("first_seen") @db.Timestamptz(6)
+  lastSeen        DateTime?             @map("last_seen") @db.Timestamptz(6)
+  packetsTotal    Int                   @default(0) @map("packets_total")
+  dataBytes       BigInt                @default(0) @map("data_bytes")
+  vendor          String?               @db.VarChar(255)
+  signalStrength  Int?                  @map("signal_strength")
+  latitude        Decimal?              @db.Decimal(10, 8)
+  longitude       Decimal?              @db.Decimal(11, 8)
+  altitude        Decimal?              @db.Decimal(8, 2)
+  dhcpHostname    String?               @map("dhcp_hostname") @db.VarChar(255)
+  dhcpVendor      String?               @map("dhcp_vendor") @db.VarChar(255)
+  userAgent       String?               @map("user_agent") @db.Text
+  location        Json?                 @db.JsonB
+  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  
+  network         WifiNetwork?          @relation(fields: [networkBssid], references: [bssid])
+  associations    NetworkAssociation[]
+
+  @@index([networkBssid])
+  @@index([lastSeen])
+  @@map("wifi_clients")
+}
+
+model BluetoothDevice {
+  id               String               @id @default(uuid()) @db.Uuid
+  bdAddress        String               @unique @map("bd_address") @db.Inet
+  deviceName       String?              @map("device_name") @db.VarChar(248)
+  deviceType       String?              @map("device_type") @db.VarChar(50)
+  deviceClass      Int?                 @map("device_class")
+  manufacturerId   Int?                 @map("manufacturer_id")
+  manufacturerData Bytes?               @map("manufacturer_data")
+  txPower          Int?                 @map("tx_power")
+  rssi             Int?
+  firstSeen        DateTime?            @map("first_seen") @db.Timestamptz(6)
+  lastSeen         DateTime?            @map("last_seen") @db.Timestamptz(6)
+  timesSeen        Int                  @default(1) @map("times_seen")
+  vendor           String?              @db.VarChar(255)
+  latitude         Decimal?             @db.Decimal(10, 8)
+  longitude        Decimal?             @db.Decimal(11, 8)
+  altitude         Decimal?             @db.Decimal(8, 2)
+  isRandomAddress  Boolean              @default(false) @map("is_random_address")
+  location         Json?                @db.JsonB
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  
+  services         BluetoothService[]
+
+  @@index([lastSeen])
+  @@index([vendor])
+  @@map("bluetooth_devices")
+}
+
+model BluetoothService {
+  id                  String            @id @default(uuid()) @db.Uuid
+  deviceId            String            @map("device_id") @db.Uuid
+  serviceUuid         String            @map("service_uuid") @db.Uuid
+  serviceName         String?           @map("service_name") @db.VarChar(255)
+  serviceType         String?           @map("service_type") @db.VarChar(50)
+  characteristicCount Int               @default(0) @map("characteristic_count")
+  firstSeen           DateTime?         @map("first_seen") @db.Timestamptz(6)
+  lastSeen            DateTime?         @map("last_seen") @db.Timestamptz(6)
+  serviceData         Bytes?            @map("service_data")
+  createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  
+  device              BluetoothDevice   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, serviceUuid])
+  @@map("bluetooth_services")
+}
+
+// ============================================
+// Time-Series Analytics Tables (Partitioned)
+// ============================================
+
+model DeviceLocation {
+  id             String    @id @default(uuid()) @db.Uuid
+  deviceKey      String    @map("device_key") @db.VarChar(255)
+  deviceMac      String?   @map("device_mac") @db.Inet
+  timestamp      DateTime  @db.Timestamptz(6)
+  latitude       Decimal   @db.Decimal(10, 8)
+  longitude      Decimal   @db.Decimal(11, 8)
+  altitude       Decimal?  @db.Decimal(8, 2)
+  accuracy       Decimal?  @db.Decimal(6, 2)
+  speed          Decimal?  @db.Decimal(6, 2)
+  heading        Decimal?  @db.Decimal(5, 1)
+  locationSource String?   @map("location_source") @db.VarChar(50)
+  signalStrength Int?      @map("signal_strength")
+  datasourceUuid String?   @map("datasource_uuid") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([deviceKey])
   @@index([timestamp])
+  @@map("device_locations")
 }
 
-model AnalysisResult {
-  id                String   @id @default(uuid())
-  deviceId          String
-  device            Device   @relation(fields: [deviceId], references: [id])
-  persistenceScore  Float
-  analysisTimestamp DateTime
-  locationCount     Int
-  timeWindowHours   Int
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+model SignalMeasurement {
+  id              String    @id @default(uuid()) @db.Uuid
+  deviceKey       String?   @map("device_key") @db.VarChar(255)
+  deviceMac       String?   @map("device_mac") @db.Inet
+  targetMac       String?   @map("target_mac") @db.Inet
+  measurementType String?   @map("measurement_type") @db.VarChar(50)
+  signalDbm       Int?      @map("signal_dbm")
+  noiseDbm        Int?      @map("noise_dbm")
+  snr             Decimal?  @db.Decimal(5, 2)
+  timestamp       DateTime  @db.Timestamptz(6)
+  latitude        Decimal?  @db.Decimal(10, 8)
+  longitude       Decimal?  @db.Decimal(11, 8)
+  altitude        Decimal?  @db.Decimal(8, 2)
+  frequency       Int?
+  channel         String?   @db.VarChar(20)
+  datasourceUuid  String?   @map("datasource_uuid") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  @@index([deviceId])
-  @@index([persistenceScore])
+  @@index([timestamp])
+  @@index([deviceKey])
+  @@map("signal_measurements")
+}
+
+// ============================================
+// Relationship Tables
+// ============================================
+
+model NetworkAssociation {
+  id                 String       @id @default(uuid()) @db.Uuid
+  clientMac          String       @map("client_mac") @db.Inet
+  networkBssid       String?      @map("network_bssid") @db.Inet
+  associationType    String?      @map("association_type") @db.VarChar(50)
+  associationTime    DateTime?    @map("association_time") @db.Timestamptz(6)
+  disassociationTime DateTime?    @map("disassociation_time") @db.Timestamptz(6)
+  durationSeconds    Int?         @map("duration_seconds")
+  reasonCode         Int?         @map("reason_code")
+  signalStrength     Int?         @map("signal_strength")
+  dataTransferred    BigInt       @default(0) @map("data_transferred")
+  latitude           Decimal?     @db.Decimal(10, 8)
+  longitude          Decimal?     @db.Decimal(11, 8)
+  location           Json?        @db.JsonB
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  
+  client             WifiClient?  @relation(fields: [clientMac], references: [clientMac])
+  network            WifiNetwork? @relation(fields: [networkBssid], references: [bssid])
+
+  @@index([clientMac])
+  @@index([networkBssid])
+  @@map("network_associations")
+}
+
+model WardrivingSession {
+  id                 String    @id @default(uuid()) @db.Uuid
+  sessionName        String?   @map("session_name") @db.VarChar(255)
+  startTime          DateTime  @map("start_time") @db.Timestamptz(6)
+  endTime            DateTime? @map("end_time") @db.Timestamptz(6)
+  totalDistance      Decimal?  @map("total_distance") @db.Decimal(10, 2)
+  areaCovered        Decimal?  @map("area_covered") @db.Decimal(12, 2)
+  devicesDiscovered  Int       @default(0) @map("devices_discovered")
+  networksDiscovered Int       @default(0) @map("networks_discovered")
+  datasourceUuids    String[]  @map("datasource_uuids") @db.Uuid
+  routeGeojson       Json?     @map("route_geojson") @db.JsonB
+  metadata           Json?     @db.JsonB
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("wardriving_sessions")
 }
