@@ -6,10 +6,16 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-isr_db}
       POSTGRES_USER: ${POSTGRES_USER:-isr_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-isr_password}
+      POSTGRES_HOST_AUTH_METHOD: md5
+    command: >
+      postgres
+      -c hba_file=/etc/postgresql/pg_hba.conf
+      -c listen_addresses='*'
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./database/pg_hba.conf/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     ports:
-      - "5432:5432"
+      - "0.0.0.0:5433:5432"
     networks:
       - isr-network
     healthcheck:
