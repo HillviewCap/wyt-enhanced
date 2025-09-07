@@ -5,9 +5,9 @@ export interface HealthStatus {
 
 export interface Device {
   id: string;
-  macAddress: string;
-  firstSeen: Date;
-  lastSeen: Date;
+  macAddress: string | null;
+  firstSeen: Date | null;
+  lastSeen: Date | null;
 }
 
 export interface Sighting {
@@ -16,7 +16,7 @@ export interface Sighting {
   timestamp: Date;
   latitude: number;
   longitude: number;
-  signalStrength: number;
+  signalStrength: number | null;
 }
 
 export interface AnalysisResult {

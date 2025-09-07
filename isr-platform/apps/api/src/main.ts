@@ -1,7 +1,12 @@
+import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import datasourcesRoutes from './app/routes/datasources.routes';
+import wifiRoutes from './app/routes/wifi.routes';
+import drivesRoutes from './app/routes/drives.routes';
+import { surveillanceRoutes } from './app/routes/surveillance.routes';
+import intelligenceRoutes from './app/routes/intelligence.routes';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -23,6 +28,10 @@ app.get('/health', (req: Request, res: Response) => {
 
 // Mount API routes
 app.use('/api', datasourcesRoutes);
+app.use('/api/wifi', wifiRoutes);
+app.use('/api/drives', drivesRoutes);
+app.use('/api/surveillance', surveillanceRoutes);
+app.use('/api/intelligence', intelligenceRoutes);
 
 // Global error handler
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {

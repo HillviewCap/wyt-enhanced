@@ -14,6 +14,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/pg_hba.conf/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./database/init:/docker-entrypoint-initdb.d:ro
     ports:
       - "0.0.0.0:5433:5432"
     networks:
@@ -33,6 +34,8 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: ${API_PORT:-3001}
       DATABASE_URL: postgresql://isr_user:isr_password@postgres:5432/isr_db
+      WIGLE_API_NAME: ${WIGLE_API_NAME:-}
+      WIGLE_API_TOKEN: ${WIGLE_API_TOKEN:-}
     volumes:
       - /home/kali/kismet_logs:/home/kali/kismet_logs:ro
     ports:

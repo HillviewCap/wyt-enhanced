@@ -5,10 +5,24 @@ export class AnalysisResultRepository {
   constructor(private prisma: PrismaClient) {}
 
   /**
+   * Convert Prisma AnalysisResult to interface
+   */
+  private convertToInterface(prismaResult: PrismaAnalysisResult): AnalysisResult {
+    return {
+      id: prismaResult.id,
+      deviceId: prismaResult.deviceId,
+      persistenceScore: Number(prismaResult.persistenceScore),
+      analysisTimestamp: prismaResult.analysisTimestamp,
+      locationCount: prismaResult.locationCount,
+      timeWindowHours: prismaResult.timeWindowHours,
+    };
+  }
+
+  /**
    * Create a new analysis result
    */
   async create(data: Omit<AnalysisResult, 'id'>): Promise<AnalysisResult> {
-    return await this.prisma.analysisResult.create({
+    const result = await this.prisma.analysisResult.create({
       data: {
         deviceId: data.deviceId,
         persistenceScore: data.persistenceScore,
@@ -17,6 +31,7 @@ export class AnalysisResultRepository {
         timeWindowHours: data.timeWindowHours,
       },
     });
+    return this.convertToInterface(result);
   }
 
   /**
@@ -39,16 +54,17 @@ export class AnalysisResultRepository {
    * Find all analysis results
    */
   async findAll(): Promise<AnalysisResult[]> {
-    return await this.prisma.analysisResult.findMany({
+    const results = await this.prisma.analysisResult.findMany({
       orderBy: { persistenceScore: 'desc' },
     });
+    return results.map(r => this.convertToInterface(r));
   }
 
   /**
    * Find analysis results by minimum persistence score
    */
   async findByMinScore(minScore: number): Promise<AnalysisResult[]> {
-    return await this.prisma.analysisResult.findMany({
+    const results = await this.prisma.analysisResult.findMany({
       where: {
         persistenceScore: {
           gte: minScore,
@@ -56,23 +72,25 @@ export class AnalysisResultRepository {
       },
       orderBy: { persistenceScore: 'desc' },
     });
+    return results.map(r => this.convertToInterface(r));
   }
 
   /**
    * Find analysis result by device ID
    */
   async findByDeviceId(deviceId: string): Promise<AnalysisResult | null> {
-    return await this.prisma.analysisResult.findFirst({
+    const result = await this.prisma.analysisResult.findFirst({
       where: { deviceId },
       orderBy: { analysisTimestamp: 'desc' },
     });
+    return result ? this.convertToInterface(result) : null;
   }
 
   /**
    * Find analysis results by device IDs
    */
   async findByDeviceIds(deviceIds: string[]): Promise<AnalysisResult[]> {
-    return await this.prisma.analysisResult.findMany({
+    const results = await this.prisma.analysisResult.findMany({
       where: {
         deviceId: {
           in: deviceIds,
@@ -80,13 +98,14 @@ export class AnalysisResultRepository {
       },
       orderBy: { persistenceScore: 'desc' },
     });
+    return results.map(r => this.convertToInterface(r));
   }
 
   /**
    * Update an analysis result
    */
   async update(id: string, data: Partial<Omit<AnalysisResult, 'id'>>): Promise<AnalysisResult> {
-    return await this.prisma.analysisResult.update({
+    const result = await this.prisma.analysisResult.update({
       where: { id },
       data: {
         persistenceScore: data.persistenceScore,
@@ -95,6 +114,7 @@ export class AnalysisResultRepository {
         timeWindowHours: data.timeWindowHours,
       },
     });
+    return this.convertToInterface(result);
   }
 
   /**
@@ -137,13 +157,18 @@ export class AnalysisResultRepository {
   async findWithDevices(minScore?: number): Promise<(AnalysisResult & { device: any })[]> {
     const where = minScore ? { persistenceScore: { gte: minScore } } : {};
     
-    return await this.prisma.analysisResult.findMany({
+    const results = await this.prisma.analysisResult.findMany({
       where,
       include: {
         device: true,
       },
       orderBy: { persistenceScore: 'desc' },
     });
+
+    return results.map(r => ({
+      ...this.convertToInterface(r),
+      device: r.device,
+    }));
   }
 
   /**

@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Device as PrismaDevice, Sighting as PrismaSighting } from '@prisma/client';
 import { Device, Sighting } from '@isr-platform/data-models';
 
 export interface AnalysisConfig {
@@ -83,7 +83,7 @@ export class PersistenceAnalysisService {
   /**
    * Process a batch of devices
    */
-  private async processBatch(devices: Device[]): Promise<void> {
+  private async processBatch(devices: PrismaDevice[]): Promise<void> {
     const analysisResults = [];
 
     for (const device of devices) {
@@ -115,7 +115,7 @@ export class PersistenceAnalysisService {
   /**
    * Analyze a single device
    */
-  async analyzeDevice(device: Device): Promise<DeviceAnalysis | null> {
+  async analyzeDevice(device: PrismaDevice): Promise<DeviceAnalysis | null> {
     const sightings = await this.prisma.sighting.findMany({
       where: { deviceId: device.id },
       orderBy: { timestamp: 'asc' },
@@ -125,17 +125,27 @@ export class PersistenceAnalysisService {
       return null;
     }
 
+    // Convert Prisma sightings to interface for calculations
+    const convertedSightings: Sighting[] = sightings.map(s => ({
+      id: s.id,
+      deviceId: s.deviceId,
+      timestamp: s.timestamp,
+      latitude: Number(s.latitude),
+      longitude: Number(s.longitude),
+      signalStrength: s.signalStrength
+    }));
+
     // Cluster sightings by location
-    const locationClusters = this.clusterSightingsByLocation(sightings);
+    const locationClusters = this.clusterSightingsByLocation(convertedSightings);
     
     // Calculate time-based metrics
-    const timeMetrics = this.calculateTimeMetrics(sightings);
+    const timeMetrics = this.calculateTimeMetrics(convertedSightings);
     
     // Calculate persistence score
     const persistenceScore = this.calculatePersistenceScore(
       locationClusters,
       timeMetrics,
-      sightings
+      convertedSightings
     );
 
     return {
@@ -313,7 +323,17 @@ export class PersistenceAnalysisService {
         orderBy: { timestamp: 'asc' },
       });
 
-      const clusters = this.clusterSightingsByLocation(sightings);
+      // Convert Prisma sightings to interface for clustering
+      const convertedSightings: Sighting[] = sightings.map(s => ({
+        id: s.id,
+        deviceId: s.deviceId,
+        timestamp: s.timestamp,
+        latitude: Number(s.latitude),
+        longitude: Number(s.longitude),
+        signalStrength: s.signalStrength
+      }));
+      
+      const clusters = this.clusterSightingsByLocation(convertedSightings);
       if (clusters.length > 1) {
         // Check if sightings at different locations occur within time window
         const windowMs = this.config.timeWindowHours * 60 * 60 * 1000;
