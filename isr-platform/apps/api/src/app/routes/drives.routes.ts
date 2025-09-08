@@ -244,7 +244,7 @@ router.get('/stats', async (req: Request, res: Response) => {
         _avg: { areaCovered: true },
       }),
       prisma.wardrivingSession.findMany({
-        take: 5,
+        take: 50,
         orderBy: { startTime: 'desc' },
         select: {
           id: true,

@@ -15,17 +15,23 @@ export const NavBar: React.FC = () => {
         <div className="flex items-center space-x-6">
           <h1 className="text-[#EAEAEA] text-xl font-bold">ISR Platform</h1>
           <div className="flex items-center space-x-2">
+            <NavLink to="/detections" className={navLinkClass}>
+              📋 All Detections
+            </NavLink>
             <NavLink to="/wifi-map" className={navLinkClass}>
               📶 WiFi Networks
             </NavLink>
             <NavLink to="/map" className={navLinkClass}>
-              🗺️ Analysis Map
+              📱 WiFi Clients
             </NavLink>
             <NavLink to="/surveillance" className={navLinkClass}>
               🚨 Surveillance
             </NavLink>
             <NavLink to="/datasources" className={navLinkClass}>
               📡 Data Sources
+            </NavLink>
+            <NavLink to="/rfsensor" className={navLinkClass}>
+              🎯 RF Sensors
             </NavLink>
           </div>
         </div>

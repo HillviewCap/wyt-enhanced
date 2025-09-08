@@ -17,6 +17,8 @@ export function DriveControlPanel() {
     setSelectedDriveSession,
     setDriveSessions,
     setDrivesError,
+    filteredDriveSessions,
+    fetchDriveSessionNetworks,
   } = useNetworkStore();
 
   const handleFilterChange = (key: string, value: any) => {
@@ -67,6 +69,12 @@ export function DriveControlPanel() {
   };
 
   const activeFilterCount = Object.values(driveFilters).filter(v => v !== undefined && v !== '').length;
+  
+  // Get filtered drive sessions - memoized for performance
+  const filteredDriveSessionsList = React.useMemo(() => filteredDriveSessions(), [
+    driveSessions, 
+    driveFilters
+  ]);
 
   return (
     <div className="absolute top-16 left-4 z-[1000]">
@@ -204,18 +212,29 @@ export function DriveControlPanel() {
           </div>
 
           {/* Drive Sessions List */}
-          {showDriveRoutes && driveSessions.length > 0 && (
+          {showDriveRoutes && filteredDriveSessionsList.length > 0 && (
             <div className="mt-4 pt-3 border-t border-gray-200">
               <h4 className="text-sm font-medium text-gray-700 mb-2">
-                Recent Drives ({driveSessions.length})
+                Recent Drives ({filteredDriveSessionsList.length})
+                {driveSessions.length !== filteredDriveSessionsList.length && (
+                  <span className="text-gray-500"> / {driveSessions.length} total</span>
+                )}
               </h4>
-              <div className="space-y-2 max-h-32 overflow-y-auto">
-                {driveSessions.slice(0, 5).map((session) => (
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {filteredDriveSessionsList.map((session) => (
                   <button
                     key={session.id}
-                    onClick={() => setSelectedDriveSession(
-                      selectedDriveSession?.id === session.id ? null : session
-                    )}
+                    onClick={async () => {
+                      const isCurrentlySelected = selectedDriveSession?.id === session.id;
+                      if (isCurrentlySelected) {
+                        // Deselect the session
+                        setSelectedDriveSession(null);
+                      } else {
+                        // Select the session and fetch its networks
+                        setSelectedDriveSession(session);
+                        await fetchDriveSessionNetworks(session.id);
+                      }
+                    }}
                     className={`
                       w-full text-left p-2 rounded border text-xs transition-colors
                       ${selectedDriveSession?.id === session.id 

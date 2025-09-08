@@ -6,6 +6,8 @@ import { useNetworkStore } from '../../stores/networkStore';
 import { WifiNetworkMarker } from './WifiNetworkMarker';
 import { DriveRouteOverlay } from './DriveRouteOverlay';
 import { NetworkFilterPanel } from '../ui/NetworkFilterPanel';
+import { NetworkDetailPanel } from '../ui/NetworkDetailPanel';
+import { ClusterContentPanel } from '../ui/ClusterContentPanel';
 import { DriveControlPanel } from '../ui/DriveControlPanel';
 import { LoadingSpinner } from '../ui/LoadingSpinner';
 import { ErrorMessage } from '../ui/ErrorMessage';
@@ -32,12 +34,20 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
     networksError,
     networkFilters,
     driveSessions,
+    driveSessionNetworks,
     drivesLoading,
     drivesError,
     driveFilters,
     selectedDriveSession,
     showDriveRoutes,
     enableClustering,
+    showNetworkDetailPanel,
+    networkDetailPanelNetwork,
+    showClusterContentPanel,
+    clusterContentNetworks,
+    closeNetworkDetailPanel,
+    openClusterContentPanel,
+    closeClusterContentPanel,
     setNetworks,
     setNetworksLoading,
     setNetworksError,
@@ -57,10 +67,40 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
     
     try {
       const url = new URL('/api/wifi/networks', window.location.origin);
-      url.searchParams.set('limit', '1000');
+      url.searchParams.set('limit', '10000');
       
       if (bbox) {
         url.searchParams.set('bbox', bbox.join(','));
+      }
+      
+      // Add client filtering parameters
+      if (networkFilters.hasClients !== undefined) {
+        url.searchParams.set('has_clients', networkFilters.hasClients.toString());
+      }
+      
+      if (networkFilters.minClients) {
+        url.searchParams.set('min_clients', networkFilters.minClients.toString());
+      }
+      
+      // Add other existing filters
+      if (networkFilters.securityType) {
+        url.searchParams.set('security_type', networkFilters.securityType);
+      }
+      
+      if (networkFilters.minSignalStrength) {
+        url.searchParams.set('min_signal_strength', networkFilters.minSignalStrength.toString());
+      }
+      
+      if (networkFilters.maxSignalStrength) {
+        url.searchParams.set('max_signal_strength', networkFilters.maxSignalStrength.toString());
+      }
+      
+      if (networkFilters.channel) {
+        url.searchParams.set('channel', networkFilters.channel.toString());
+      }
+      
+      if (networkFilters.vendor) {
+        url.searchParams.set('vendor', networkFilters.vendor);
       }
       
       const response = await fetch(url.toString());
@@ -77,7 +117,7 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
     } finally {
       setNetworksLoading(false);
     }
-  }, [setNetworks, setNetworksLoading, setNetworksError]);
+  }, [setNetworks, setNetworksLoading, setNetworksError, networkFilters]);
 
   // Fetch drive sessions
   const fetchDriveSessions = useCallback(async () => {
@@ -186,7 +226,8 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
   const filteredNetworksList = React.useMemo(() => filteredNetworks(), [
     networks, 
     networkFilters, 
-    selectedDriveSession
+    selectedDriveSession,
+    driveSessionNetworks
   ]);
   const filteredDriveSessionsList = React.useMemo(() => filteredDriveSessions(), [
     driveSessions, 
@@ -215,6 +256,45 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
     });
   };
 
+  // Handle cluster click to show bottom panel with cluster contents
+  const handleClusterClick = useCallback((event: any) => {
+    const cluster = event.layer || event.target;
+    if (!cluster || !cluster.getAllChildMarkers) return;
+    
+    const clusterMarkers = cluster.getAllChildMarkers();
+    const clusterNetworks: any[] = [];
+    
+    // Extract networks from markers
+    clusterMarkers.forEach((marker: any) => {
+      // Try different ways to get the network ID
+      const markerId = marker.options?.alt || 
+                      marker.options?.title || 
+                      marker._myIcon?.options?.alt ||
+                      marker._myIcon?.options?.title;
+      
+      if (markerId) {
+        const network = filteredNetworksList.find(n => n.id === markerId);
+        if (network) {
+          clusterNetworks.push(network);
+        }
+      }
+    });
+    
+    // Fallback: if we can't match markers to networks, use position-based matching
+    if (clusterNetworks.length === 0) {
+      const clusterBounds = cluster.getBounds();
+      const networksInBounds = filteredNetworksList.filter(network => {
+        if (network.latitude === null || network.longitude === null) return false;
+        return clusterBounds.contains([network.latitude, network.longitude]);
+      });
+      clusterNetworks.push(...networksInBounds);
+    }
+    
+    if (clusterNetworks.length > 0) {
+      openClusterContentPanel(clusterNetworks);
+    }
+  }, [filteredNetworksList, openClusterContentPanel]);
+
   return (
     <div className="relative h-screen w-screen">
       <MapContainer
@@ -240,6 +320,14 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
             maxClusterRadius={50}
             disableClusteringAtZoom={18}
             iconCreateFunction={createClusterCustomIcon}
+            spiderfyOnMaxZoom={false}
+            showCoverageOnHover={false}
+            zoomToBoundsOnClick={false}
+            spiderfyDistanceMultiplier={2}
+            removeOutsideVisibleBounds={false}
+            eventHandlers={{
+              clusterclick: handleClusterClick,
+            }}
           >
             {filteredNetworksList
               .filter(network => network.latitude !== null && network.longitude !== null)
@@ -315,6 +403,7 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
       >
         🔥 Heatmap: {showHeatmap ? 'ON' : 'OFF'}
       </button>
+
 
       {/* Refresh Data Button */}
       <button
@@ -401,6 +490,20 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
             setHeatmapData(data.heatmapPoints);
           }
         }}
+      />
+
+      {/* Network Detail Panel */}
+      <NetworkDetailPanel
+        network={networkDetailPanelNetwork}
+        isOpen={showNetworkDetailPanel}
+        onClose={closeNetworkDetailPanel}
+      />
+
+      {/* Cluster Content Panel */}
+      <ClusterContentPanel
+        networks={clusterContentNetworks}
+        isOpen={showClusterContentPanel}
+        onClose={closeClusterContentPanel}
       />
     </div>
   );

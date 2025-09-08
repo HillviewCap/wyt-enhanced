@@ -96,7 +96,12 @@ const getSignalRadius = (signalStrength?: number): number => {
 };
 
 export function WifiNetworkMarker({ network }: WifiNetworkMarkerProps) {
-  const { selectedNetwork, setSelectedNetwork, showSignalRadius } = useNetworkStore();
+  const { 
+    selectedNetwork, 
+    setSelectedNetwork, 
+    showSignalRadius,
+    openNetworkDetailPanel
+  } = useNetworkStore();
 
   // Don't render if coordinates are null
   if (network.latitude === null || network.longitude === null) {
@@ -105,6 +110,10 @@ export function WifiNetworkMarker({ network }: WifiNetworkMarkerProps) {
 
   const handleMarkerClick = () => {
     setSelectedNetwork(network);
+  };
+
+  const handleViewDetails = () => {
+    openNetworkDetailPanel(network);
   };
 
   const formatSignalStrength = (strength?: number): string => {
@@ -130,6 +139,7 @@ export function WifiNetworkMarker({ network }: WifiNetworkMarkerProps) {
       <Marker
         position={[network.latitude, network.longitude]}
         icon={getSignalIcon(network)}
+        alt={network.id}
         eventHandlers={{
           click: handleMarkerClick,
         }}
@@ -198,15 +208,18 @@ export function WifiNetworkMarker({ network }: WifiNetworkMarkerProps) {
             </div>
             
             <div className="mt-3 pt-2 border-t border-gray-200">
-              <button 
-                className="text-xs text-blue-600 hover:text-blue-800 underline"
-                onClick={() => {
-                  // TODO: Open detailed network view
-                  console.log('View network details:', network.id);
+              <div
+                className="block text-xs text-blue-600 hover:text-blue-800 underline cursor-pointer"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleViewDetails();
                 }}
+                role="button"
+                tabIndex={0}
               >
-                View Details →
-              </button>
+                View Network Details →
+              </div>
             </div>
           </div>
         </Popup>

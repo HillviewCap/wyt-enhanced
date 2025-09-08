@@ -32,7 +32,7 @@ export class WigleIntegrationService {
   private prisma: PrismaClient;
   private wigleApi: AxiosInstance;
   private readonly CACHE_DURATION_HOURS = 24; // Cache Wigle responses for 24 hours
-  private readonly MAX_REQUESTS_PER_DAY = 10; // Conservative limit for new accounts
+  private readonly MAX_REQUESTS_PER_DAY = 100; // Reasonable limit for testing - Wigle allows 1000+ for verified accounts
   private requestCount = 0;
   private lastResetDate = new Date().toDateString();
 
@@ -71,11 +71,11 @@ export class WigleIntegrationService {
 
   private async getCachedResponse(queryHash: string): Promise<any | null> {
     try {
-      // Check if we have this query cached in our database
-      const cached = await this.prisma.$queryRaw<WigleCache[]>`
-        SELECT * FROM wigle_cache 
-        WHERE query_hash = ${queryHash} 
-        AND expires_at > NOW()
+      // Check if we have this query cached in our database (no expiration since schema was updated)
+      // Only select the response column to avoid type casting issues with other columns
+      const cached = await this.prisma.$queryRaw<{response: any}[]>`
+        SELECT response FROM wigle_cache 
+        WHERE query_hash = ${queryHash}
         LIMIT 1
       `;
 
@@ -92,16 +92,30 @@ export class WigleIntegrationService {
 
   private async setCachedResponse(queryHash: string, response: any): Promise<void> {
     try {
-      const expiresAt = new Date();
-      expiresAt.setHours(expiresAt.getHours() + this.CACHE_DURATION_HOURS);
+      // Extract key fields from the response for the new schema
+      const results = response.results || [];
+      const firstResult = results[0] || {};
 
+      // Cache the response with essential metadata including SSID for easy lookup
+      // Extract SSID from the query parameters for the ssid column
+      const queryParams = JSON.parse(Buffer.from(queryHash, 'base64').toString());
+      const ssid = queryParams.ssid;
+      
       await this.prisma.$executeRaw`
-        INSERT INTO wigle_cache (query_hash, response, expires_at)
-        VALUES (${queryHash}, ${JSON.stringify(response)}, ${expiresAt})
+        INSERT INTO wigle_cache (query_hash, response, ssid, total_results, result_count)
+        VALUES (
+          ${queryHash}, 
+          ${response},
+          ${ssid},
+          ${response.totalResults || 0},
+          ${results.length || 0}
+        )
         ON CONFLICT (query_hash) DO UPDATE SET
           response = EXCLUDED.response,
-          expires_at = EXCLUDED.expires_at,
-          updated_at = NOW()
+          ssid = EXCLUDED.ssid,
+          updated_at = NOW(),
+          total_results = EXCLUDED.total_results,
+          result_count = EXCLUDED.result_count
       `;
     } catch (error) {
       console.error('Error caching Wigle response:', error);
@@ -282,17 +296,82 @@ export class WigleIntegrationService {
     };
   }
 
-  async clearExpiredCache(): Promise<number> {
-    try {
-      const result = await this.prisma.$executeRaw`
-        DELETE FROM wigle_cache WHERE expires_at < NOW()
-      `;
-      console.log(`🧹 Cleared ${result} expired Wigle cache entries`);
-      return result as number;
-    } catch (error) {
-      console.error('Error clearing expired cache:', error);
-      return 0;
+  async searchNetworkBySSID(ssid: string): Promise<WigleSearchResponse | null> {
+    const requestId = Math.random().toString(36).substr(2, 6);
+    console.log(`[${requestId}] 🔍 Starting Wigle SSID search for: "${ssid}"`);
+    
+    const params = { ssid };
+    const queryHash = this.generateQueryHash(params);
+    console.log(`[${requestId}] Generated query hash: ${queryHash.substring(0, 16)}...`);
+
+    // Check cache first
+    const cachedResponse = await this.getCachedResponse(queryHash);
+    if (cachedResponse) {
+      console.log(`[${requestId}] 🎯 Using cached response for "${ssid}"`);
+      return cachedResponse;
     }
+
+    // Check rate limits
+    this.initializeRateLimiting();
+    console.log(`[${requestId}] Current request count: ${this.requestCount}/${this.MAX_REQUESTS_PER_DAY}`);
+    
+    if (!this.canMakeRequest()) {
+      console.error(`[${requestId}] ❌ Wigle API rate limit exceeded. ${this.requestCount}/${this.MAX_REQUESTS_PER_DAY} requests used.`);
+      return null;
+    }
+
+    try {
+      console.log(`[${requestId}] 🌐 Making Wigle API request (${this.requestCount + 1}/${this.MAX_REQUESTS_PER_DAY})`);
+      
+      const response = await this.wigleApi.get('/api/v2/network/search', {
+        params: {
+          onlymine: false,
+          freenet: false,
+          paynet: false,
+          ssid: ssid,
+          variance: 0.01
+        }
+      });
+
+      this.requestCount++;
+      console.log(`[${requestId}] 📊 Request completed. New count: ${this.requestCount}/${this.MAX_REQUESTS_PER_DAY}`);
+
+      const wigleData: WigleSearchResponse = {
+        success: response.data.success || false,
+        results: response.data.results || [],
+        totalResults: response.data.totalResults || 0,
+        search_after: response.data.search_after
+      };
+
+      // Cache the response
+      await this.setCachedResponse(queryHash, wigleData);
+
+      console.log(`[${requestId}] ✅ Wigle API returned ${wigleData.results.length} networks for SSID "${ssid}"`);
+      return wigleData;
+
+    } catch (error: any) {
+      console.error(`[${requestId}] ❌ Wigle API SSID search failed:`, error.message);
+      console.error(`[${requestId}] Error details:`, {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data
+      });
+      
+      if (error.response?.status === 429) {
+        console.error(`[${requestId}] 🚫 Rate limited by Wigle API`);
+      } else if (error.response?.status === 401) {
+        console.error(`[${requestId}] 🔐 Wigle API authentication failed - check API credentials`);
+      }
+      
+      return null;
+    }
+  }
+
+  async clearExpiredCache(): Promise<number> {
+    // Since we removed expiration, this method now just returns 0
+    // but we keep it for backwards compatibility
+    console.log('🧹 Cache expiration disabled - data is kept permanently');
+    return 0;
   }
 }
 

@@ -18,6 +18,21 @@ export interface WifiNetwork {
   clientCount: number;
 }
 
+export interface WifiClient {
+  id: string;
+  clientMac: string;
+  vendor?: string;
+  latitude: number;
+  longitude: number;
+  firstSeen?: string;
+  lastSeen?: string;
+  signalStrength?: number;
+  network: {
+    ssid?: string;
+    bssid: string;
+  };
+}
+
 export interface DriveSession {
   id: string;
   sessionName?: string;
@@ -55,6 +70,8 @@ export interface NetworkFilters {
   vendor?: string;
   showHidden?: boolean;
   showOpenOnly?: boolean;
+  hasClients?: boolean;
+  minClients?: number;
 }
 
 export interface DriveFilters {
@@ -76,9 +93,25 @@ interface NetworkStore {
   showSignalRadius: boolean;
   enableClustering: boolean;
   
+  // Network Detail Panel State
+  showNetworkDetailPanel: boolean;
+  networkDetailPanelNetwork: WifiNetwork | null;
+  
+  // Cluster Content Panel State
+  showClusterContentPanel: boolean;
+  clusterContentNetworks: WifiNetwork[];
+  
+  // WiFi Clients State (deprecated - keeping for backward compatibility)
+  selectedClientLocations: WifiClient[];
+  selectedClientId: string | null;
+  clientsLoading: boolean;
+  clientsError: string | null;
+  showClientLocations: boolean;
+  
   // Drive Sessions State
   driveSessions: DriveSession[];
   selectedDriveSession: DriveSession | null;
+  driveSessionNetworks: WifiNetwork[]; // Networks discovered during selected drive session
   drivesLoading: boolean;
   drivesError: string | null;
   driveFilters: DriveFilters;
@@ -98,10 +131,32 @@ interface NetworkStore {
   setShowSignalRadius: (show: boolean) => void;
   setEnableClustering: (enable: boolean) => void;
   
+  // Network Detail Panel Actions
+  setShowNetworkDetailPanel: (show: boolean) => void;
+  setNetworkDetailPanelNetwork: (network: WifiNetwork | null) => void;
+  openNetworkDetailPanel: (network: WifiNetwork) => void;
+  closeNetworkDetailPanel: () => void;
+  
+  // Cluster Content Panel Actions
+  setShowClusterContentPanel: (show: boolean) => void;
+  setClusterContentNetworks: (networks: WifiNetwork[]) => void;
+  openClusterContentPanel: (networks: WifiNetwork[]) => void;
+  closeClusterContentPanel: () => void;
+  
+  // Client Actions (deprecated - keeping for backward compatibility)
+  setSelectedClientLocations: (locations: WifiClient[]) => void;
+  setSelectedClientId: (clientId: string | null) => void;
+  setClientsLoading: (loading: boolean) => void;
+  setClientsError: (error: string | null) => void;
+  setShowClientLocations: (show: boolean) => void;
+  fetchClientLocations: (clientId: string) => Promise<void>;
+  
   // Drive Actions
   setDriveSessions: (sessions: DriveSession[]) => void;
   addDriveSession: (session: DriveSession) => void;
   setSelectedDriveSession: (session: DriveSession | null) => void;
+  setDriveSessionNetworks: (networks: WifiNetwork[]) => void;
+  fetchDriveSessionNetworks: (sessionId: string) => Promise<void>;
   setDrivesLoading: (loading: boolean) => void;
   setDrivesError: (error: string | null) => void;
   setDriveFilters: (filters: Partial<DriveFilters>) => void;
@@ -128,12 +183,25 @@ export const useNetworkStore = create<NetworkStore>()(
       showSignalRadius: false,
       enableClustering: true,
       
+      showNetworkDetailPanel: false,
+      networkDetailPanelNetwork: null,
+      
+      showClusterContentPanel: false,
+      clusterContentNetworks: [],
+      
+      selectedClientLocations: [],
+      selectedClientId: null,
+      clientsLoading: false,
+      clientsError: null,
+      showClientLocations: false,
+      
       driveSessions: [],
       selectedDriveSession: null,
+      driveSessionNetworks: [],
       drivesLoading: false,
       drivesError: null,
       driveFilters: {},
-      showDriveRoutes: true,
+      showDriveRoutes: false,
       
       // Network Actions
       setNetworks: (networks) => set({ networks }),
@@ -158,6 +226,71 @@ export const useNetworkStore = create<NetworkStore>()(
       
       setEnableClustering: (enable) => set({ enableClustering: enable }),
       
+      // Network Detail Panel Actions
+      setShowNetworkDetailPanel: (show) => set({ showNetworkDetailPanel: show }),
+      
+      setNetworkDetailPanelNetwork: (network) => set({ networkDetailPanelNetwork: network }),
+      
+      openNetworkDetailPanel: (network) => set({ 
+        showNetworkDetailPanel: true, 
+        networkDetailPanelNetwork: network 
+      }),
+      
+      closeNetworkDetailPanel: () => set({ 
+        showNetworkDetailPanel: false, 
+        networkDetailPanelNetwork: null 
+      }),
+      
+      // Cluster Content Panel Actions
+      setShowClusterContentPanel: (show) => set({ showClusterContentPanel: show }),
+      
+      setClusterContentNetworks: (networks) => set({ clusterContentNetworks: networks }),
+      
+      openClusterContentPanel: (networks) => set({ 
+        showClusterContentPanel: true, 
+        clusterContentNetworks: networks 
+      }),
+      
+      closeClusterContentPanel: () => set({ 
+        showClusterContentPanel: false, 
+        clusterContentNetworks: [] 
+      }),
+      
+      // Client Actions (deprecated - keeping for backward compatibility)
+      setSelectedClientLocations: (locations) => set({ selectedClientLocations: locations }),
+      
+      setSelectedClientId: (clientId) => set({ selectedClientId: clientId }),
+      
+      setClientsLoading: (loading) => set({ clientsLoading: loading }),
+      
+      setClientsError: (error) => set({ clientsError: error }),
+      
+      setShowClientLocations: (show) => set({ showClientLocations: show }),
+      
+      fetchClientLocations: async (clientId) => {
+        set({ clientsLoading: true, clientsError: null });
+        
+        try {
+          const response = await fetch(`/api/wifi/clients/${clientId}/locations`);
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          
+          const data = await response.json();
+          set({ 
+            selectedClientLocations: data.locations || [],
+            selectedClientId: clientId,
+            showClientLocations: true
+          });
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Failed to fetch client locations';
+          set({ clientsError: errorMessage });
+          console.error('Failed to fetch client locations:', error);
+        } finally {
+          set({ clientsLoading: false });
+        }
+      },
+      
       // Drive Actions
       setDriveSessions: (sessions) => set({ driveSessions: sessions }),
       
@@ -165,7 +298,39 @@ export const useNetworkStore = create<NetworkStore>()(
         driveSessions: [...state.driveSessions.filter(s => s.id !== session.id), session]
       })),
       
-      setSelectedDriveSession: (session) => set({ selectedDriveSession: session }),
+      setSelectedDriveSession: (session) => {
+        set({ selectedDriveSession: session });
+        // Clear drive session networks when selection changes
+        if (!session) {
+          set({ driveSessionNetworks: [] });
+        }
+      },
+      
+      setDriveSessionNetworks: (networks) => set({ driveSessionNetworks: networks }),
+      
+      fetchDriveSessionNetworks: async (sessionId) => {
+        set({ drivesLoading: true, drivesError: null });
+        
+        try {
+          const response = await fetch(`/api/drives/sessions/${sessionId}/networks`);
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          
+          const data = await response.json();
+          set({ 
+            driveSessionNetworks: data.networks || [],
+            drivesLoading: false
+          });
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Failed to fetch drive session networks';
+          set({ 
+            drivesError: errorMessage,
+            drivesLoading: false
+          });
+          console.error('Failed to fetch drive session networks:', error);
+        }
+      },
       
       setDrivesLoading: (loading) => set({ drivesLoading: loading }),
       
@@ -184,19 +349,12 @@ export const useNetworkStore = create<NetworkStore>()(
       
       // Derived State
       filteredNetworks: () => {
-        const { networks, networkFilters, selectedDriveSession } = get();
+        const { networks, networkFilters, selectedDriveSession, driveSessionNetworks } = get();
         
-        return networks.filter(network => {
-          // Selected drive session filter - only show networks discovered during the selected drive
-          if (selectedDriveSession && network.firstSeen) {
-            const networkTime = new Date(network.firstSeen);
-            const driveStart = new Date(selectedDriveSession.startTime);
-            const driveEnd = selectedDriveSession.endTime ? new Date(selectedDriveSession.endTime) : new Date();
-            
-            if (networkTime < driveStart || networkTime > driveEnd) {
-              return false;
-            }
-          }
+        // Use drive session networks if a drive is selected, otherwise use all networks
+        const baseNetworks = selectedDriveSession ? driveSessionNetworks : networks;
+        
+        return baseNetworks.filter(network => {
           
           // Security type filter
           if (networkFilters.securityType && network.securityType !== networkFilters.securityType) {
@@ -235,6 +393,19 @@ export const useNetworkStore = create<NetworkStore>()(
             return false;
           }
           
+          // Client filters
+          if (networkFilters.hasClients === true && network.clientCount === 0) {
+            return false;
+          }
+          
+          if (networkFilters.hasClients === false && network.clientCount > 0) {
+            return false;
+          }
+          
+          if (networkFilters.minClients && network.clientCount < networkFilters.minClients) {
+            return false;
+          }
+          
           return true;
         });
       },
@@ -243,13 +414,19 @@ export const useNetworkStore = create<NetworkStore>()(
         const { driveSessions, driveFilters } = get();
         
         return driveSessions.filter(session => {
-          // Date range filters
-          if (driveFilters.startDate && session.startTime < driveFilters.startDate) {
-            return false;
+          // Date range filters - convert session startTime to date only for comparison
+          if (driveFilters.startDate) {
+            const sessionDate = session.startTime.split('T')[0]; // Extract YYYY-MM-DD from datetime
+            if (sessionDate < driveFilters.startDate) {
+              return false;
+            }
           }
           
-          if (driveFilters.endDate && session.startTime > driveFilters.endDate) {
-            return false;
+          if (driveFilters.endDate) {
+            const sessionDate = session.startTime.split('T')[0]; // Extract YYYY-MM-DD from datetime
+            if (sessionDate > driveFilters.endDate) {
+              return false;
+            }
           }
           
           // Distance filters
@@ -286,6 +463,7 @@ export const useNetworkStore = create<NetworkStore>()(
         showSignalRadius: state.showSignalRadius,
         showDriveRoutes: state.showDriveRoutes,
         enableClustering: state.enableClustering,
+        showClientLocations: state.showClientLocations,
       }),
     }
   )
