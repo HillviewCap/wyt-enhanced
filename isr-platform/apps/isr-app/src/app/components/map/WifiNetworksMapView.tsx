@@ -1,6 +1,7 @@
 import React, { useRef, useCallback, useEffect, useState } from 'react';
 import { MapContainer, TileLayer, ZoomControl, useMapEvents } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
+import L from 'leaflet';
 import type { Map as LeafletMap } from 'leaflet';
 import { useNetworkStore } from '../../stores/networkStore';
 import { WifiNetworkMarker } from './WifiNetworkMarker';
@@ -13,6 +14,8 @@ import { LoadingSpinner } from '../ui/LoadingSpinner';
 import { ErrorMessage } from '../ui/ErrorMessage';
 import { GeospatialIntelligencePanel } from '../intelligence/GeospatialIntelligencePanel';
 import { SignalHeatmapOverlay } from './SignalHeatmapOverlay';
+import { MobilityMapView } from './MobilityMapView';
+import { DeviceTrackingPanel } from '../ui/DeviceTrackingPanel';
 
 interface WifiNetworksMapViewProps {
   center?: [number, number];
@@ -27,6 +30,13 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
   const [mapBounds, setMapBounds] = useState<[number, number, number, number] | null>(null);
   const [heatmapData, setHeatmapData] = useState<any[]>([]);
   const [showHeatmap, setShowHeatmap] = useState(false);
+  const fetchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [isFetching, setIsFetching] = useState(false);
+  const [hasInitialLoad, setHasInitialLoad] = useState(false);
+  const [showMobilityLayer, setShowMobilityLayer] = useState(false);
+  const [showMobilityHotspots, setShowMobilityHotspots] = useState(false);
+  const [trackingClientMac, setTrackingClientMac] = useState<string | null>(null);
+  const [selectedSignature, setSelectedSignature] = useState<string | null>(null);
   
   const {
     networks,
@@ -60,15 +70,62 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
     filteredDriveSessions,
   } = useNetworkStore();
 
-  // Fetch WiFi networks
+  // Handle device tracking event from GeospatialIntelligencePanel
+  useEffect(() => {
+    const handleTrackDevice = (event: CustomEvent) => {
+      const { mac } = event.detail;
+      setTrackingClientMac(mac);
+      setShowMobilityLayer(true);
+    };
+
+    const element = document.querySelector('[data-tracking-mac-setter]');
+    if (element) {
+      element.addEventListener('track-device', handleTrackDevice as EventListener);
+      return () => {
+        element.removeEventListener('track-device', handleTrackDevice as EventListener);
+      };
+    }
+  }, []);
+
+  // Fetch WiFi networks with zoom-based limits
   const fetchNetworks = useCallback(async (bbox?: [number, number, number, number]) => {
+    // Prevent concurrent fetches
+    if (isFetching) {
+      console.log('Skipping fetch - already in progress');
+      return;
+    }
+
+    // Check minimum zoom level (don't fetch data when zoomed out too far)
+    if (mapRef.current && mapRef.current.getZoom() < 6) {
+      console.log('Zoom level too low for data fetching');
+      setNetworks([]); // Clear networks when zoomed out
+      return;
+    }
+
+    setIsFetching(true);
     setNetworksLoading(true);
     setNetworksError(null);
-    
+
     try {
       const url = new URL('/api/wifi/networks', window.location.origin);
-      url.searchParams.set('limit', '10000');
-      
+
+      // Determine limit based on zoom level if map is available
+      let limit = 10000;
+      if (mapRef.current) {
+        const zoom = mapRef.current.getZoom();
+        if (zoom < 8) {
+          limit = 300; // Very low data at low zoom
+        } else if (zoom < 10) {
+          limit = 1000; // Medium zoom
+        } else if (zoom < 12) {
+          limit = 2000; // Higher zoom
+        } else {
+          limit = 3000; // High zoom: more detail but still controlled
+        }
+      }
+
+      url.searchParams.set('limit', limit.toString());
+
       if (bbox) {
         url.searchParams.set('bbox', bbox.join(','));
       }
@@ -110,14 +167,16 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
       
       const data = await response.json();
       setNetworks(data.networks || []);
+      setHasInitialLoad(true);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to fetch WiFi networks';
       setNetworksError(errorMessage);
       console.error('Failed to fetch networks:', error);
     } finally {
       setNetworksLoading(false);
+      setIsFetching(false);
     }
-  }, [setNetworks, setNetworksLoading, setNetworksError, networkFilters]);
+  }, [isFetching, setNetworks, setNetworksLoading, setNetworksError, networkFilters]);
 
   // Fetch drive sessions
   const fetchDriveSessions = useCallback(async () => {
@@ -144,16 +203,35 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
     }
   }, [setDriveSessions, setDrivesLoading, setDrivesError]);
 
-  // Initial data fetch
+  // Initial data fetch - only fetch drive sessions on mount
   useEffect(() => {
-    fetchNetworks();
     fetchDriveSessions();
-  }, [fetchNetworks, fetchDriveSessions]);
 
-  // Update map bounds (without fetching networks automatically)
+    // Cleanup function to clear any pending timeouts
+    return () => {
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current);
+      }
+    };
+  }, [fetchDriveSessions]);
+
+  // Debounced fetch function for viewport-based loading
+  const debouncedFetchNetworks = useCallback((bbox: [number, number, number, number]) => {
+    // Clear any existing timeout
+    if (fetchTimeoutRef.current) {
+      clearTimeout(fetchTimeoutRef.current);
+    }
+
+    // Set a new timeout for debounced fetching
+    fetchTimeoutRef.current = setTimeout(() => {
+      fetchNetworks(bbox);
+    }, 1500); // Increased to 1.5 second debounce delay to prevent rapid fetching
+  }, [fetchNetworks]);
+
+  // Update map bounds and trigger debounced network fetch
   const updateMapBounds = useCallback(() => {
     if (!mapRef.current) return;
-    
+
     const bounds = mapRef.current.getBounds();
     const bbox: [number, number, number, number] = [
       bounds.getSouth(),
@@ -161,17 +239,28 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
       bounds.getNorth(),
       bounds.getEast(),
     ];
-    
-    setMapBounds(bbox);
-  }, []);
 
-  // Component to handle map events (only track bounds, don't fetch networks)
+    setMapBounds(bbox);
+
+    // Trigger debounced network fetch with current viewport
+    debouncedFetchNetworks(bbox);
+  }, [debouncedFetchNetworks]);
+
+  // Component to handle map events and trigger viewport-based fetching
   function MapBoundsHandler() {
-    useMapEvents({
+    const map = useMapEvents({
       moveend: updateMapBounds,
-      zoomend: updateMapBounds,
-      load: updateMapBounds
+      zoomend: updateMapBounds
     });
+
+    // Trigger initial fetch when component mounts and map is ready
+    useEffect(() => {
+      // Only fetch if we haven't done initial load and zoom is sufficient
+      if (!hasInitialLoad && map && map.getZoom() >= 6) {
+        updateMapBounds();
+      }
+    }, [map]); // eslint-disable-line react-hooks/exhaustive-deps
+
     return null;
   }
 
@@ -305,6 +394,8 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
         zoomControl={false}
         minZoom={2}
         maxZoom={18}
+        preferCanvas={true}
+        renderer={L.canvas({ padding: 0.5 })}
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -317,14 +408,16 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
         {enableClustering ? (
           <MarkerClusterGroup
             chunkedLoading
-            maxClusterRadius={50}
+            chunkInterval={200}
+            chunkDelay={50}
+            maxClusterRadius={80}
             disableClusteringAtZoom={18}
             iconCreateFunction={createClusterCustomIcon}
             spiderfyOnMaxZoom={false}
             showCoverageOnHover={false}
             zoomToBoundsOnClick={false}
             spiderfyDistanceMultiplier={2}
-            removeOutsideVisibleBounds={false}
+            removeOutsideVisibleBounds={true}
             eventHandlers={{
               clusterclick: handleClusterClick,
             }}
@@ -367,6 +460,17 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
 
         {/* Signal Strength Heatmap Overlay */}
         {showHeatmap && <SignalHeatmapOverlay data={heatmapData} visible={showHeatmap} />}
+
+        {/* Mobility Layer */}
+        {showMobilityLayer && (
+          <MobilityMapView
+            selectedSignature={selectedSignature}
+            selectedMac={trackingClientMac}
+            showPaths={true}
+            showHotspots={showMobilityHotspots}
+            hoursBack={168}
+          />
+        )}
       </MapContainer>
       
       {/* Map Controls */}
@@ -395,14 +499,42 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
       <button
         onClick={() => setShowHeatmap(!showHeatmap)}
         className={`absolute top-4 right-44 z-[1000] shadow-lg rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-          showHeatmap 
-            ? 'bg-red-500 hover:bg-red-600 text-white' 
+          showHeatmap
+            ? 'bg-red-500 hover:bg-red-600 text-white'
             : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
         }`}
         aria-label={showHeatmap ? "Hide heatmap" : "Show heatmap"}
       >
         🔥 Heatmap: {showHeatmap ? 'ON' : 'OFF'}
       </button>
+
+      {/* Mobility Layer Toggle */}
+      <button
+        onClick={() => setShowMobilityLayer(!showMobilityLayer)}
+        className={`absolute top-16 right-64 z-[1000] shadow-lg rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+          showMobilityLayer
+            ? 'bg-purple-500 hover:bg-purple-600 text-white'
+            : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+        }`}
+        aria-label={showMobilityLayer ? "Hide mobility tracking" : "Show mobility tracking"}
+      >
+        📍 Mobility: {showMobilityLayer ? 'ON' : 'OFF'}
+      </button>
+
+      {/* Mobility Hotspots Toggle (only shown when mobility layer is active) */}
+      {showMobilityLayer && (
+        <button
+          onClick={() => setShowMobilityHotspots(!showMobilityHotspots)}
+          className={`absolute top-16 right-44 z-[1000] shadow-lg rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+            showMobilityHotspots
+              ? 'bg-orange-500 hover:bg-orange-600 text-white'
+              : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+          }`}
+          aria-label={showMobilityHotspots ? "Hide hotspots" : "Show hotspots"}
+        >
+          🎯 Hotspots: {showMobilityHotspots ? 'ON' : 'OFF'}
+        </button>
+      )}
 
 
       {/* Refresh Data Button */}
@@ -449,6 +581,11 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
       {/* Stats Display */}
       <div className="absolute bottom-4 left-4 z-[1000] bg-white rounded-lg shadow-lg p-3 text-sm">
         <div className="space-y-1">
+          {mapRef.current && mapRef.current.getZoom() < 6 && (
+            <div className="text-amber-600 font-medium bg-amber-50 px-2 py-1 rounded border border-amber-200">
+              ⚠️ Zoom in to load network data
+            </div>
+          )}
           <div>
             <span className="font-medium">Networks:</span> {filteredNetworksList.length}
             {networks.length !== filteredNetworksList.length && (
@@ -483,14 +620,16 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
       <DriveControlPanel />
       
       {/* Geospatial Intelligence Panel */}
-      <GeospatialIntelligencePanel 
-        mapBounds={mapBounds}
-        onDataUpdate={(data) => {
-          if (data.heatmapPoints) {
-            setHeatmapData(data.heatmapPoints);
-          }
-        }}
-      />
+      <div data-tracking-mac-setter>
+        <GeospatialIntelligencePanel
+          mapBounds={mapBounds}
+          onDataUpdate={(data) => {
+            if (data.heatmapPoints) {
+              setHeatmapData(data.heatmapPoints);
+            }
+          }}
+        />
+      </div>
 
       {/* Network Detail Panel */}
       <NetworkDetailPanel
@@ -505,6 +644,23 @@ export function WifiNetworksMapView({ center = DEFAULT_CENTER, zoom = DEFAULT_ZO
         isOpen={showClusterContentPanel}
         onClose={closeClusterContentPanel}
       />
+
+      {/* Device Tracking Panel */}
+      {trackingClientMac && (
+        <DeviceTrackingPanel
+          clientMac={trackingClientMac}
+          onClose={() => setTrackingClientMac(null)}
+          onLocationSelect={(lat, lon) => {
+            if (mapRef.current) {
+              mapRef.current.setView([lat, lon], 16);
+            }
+          }}
+          onSignatureSelect={(signatureHash) => {
+            setSelectedSignature(signatureHash);
+            setShowMobilityLayer(true);
+          }}
+        />
+      )}
     </div>
   );
 }

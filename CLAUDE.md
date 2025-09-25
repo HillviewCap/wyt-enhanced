@@ -4,104 +4,130 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is the ISR Platform (Intelligence, Surveillance, and Reconnaissance) - a cloud-native platform for multi-protocol wireless signal analysis. The project consists of a monorepo architecture using Nx workspace management.
+The **wyt-enhanced** project is an Intelligence, Surveillance, and Reconnaissance (ISR) Platform - a cloud-native system for multi-protocol wireless signal analysis with geospatial intelligence capabilities. It features a hybrid monorepo architecture with containerized microservices.
 
-## Core Architecture
+## Architecture Structure
 
-- **Monorepo Structure**: Uses Nx for workspace management
-- **Microservices Architecture**: Containerized services deployed via Docker Compose
-- **Frontend**: React application with Vite, React Router, Leaflet for maps, and Zustand for state management
-- **Backend**: Express/Node.js API with Prisma ORM
-- **Database**: PostgreSQL with PostGIS for geospatial data
-- **API Gateway**: Caddy server for reverse proxy and SSL termination
+### Root Level (`/`)
+- Nx workspace management and orchestration
+- Global test configurations and utilities
+- Documentation (`/docs/` - architecture specs, PRDs, intelligence queries)
+- Implementation summaries and deployment guides
 
-## Common Development Commands
+### ISR Platform Core (`/isr-platform/`)
+- **Apps:**
+  - `/apps/api/` - Express backend with Prisma ORM
+  - `/apps/isr-app/` - React frontend with Leaflet mapping
+- **Libraries:** `/libs/` - Shared code and utilities
+- **Database:** PostgreSQL 16 with PostGIS extensions
+- **Gateway:** Caddy for reverse proxy and SSL
 
-### Project Management
+## Development Commands
+
+### Initial Setup
 ```bash
-# Install dependencies
+# Install root dependencies first
 npm install
 
-# Serve all applications concurrently
-npm run serve
-# OR
-npx nx run-many --target=serve --all
+# Navigate to ISR platform and install core dependencies
+cd isr-platform
+npm install
 
-# Build all applications
-npm run build
-# OR
-npx nx run-many --target=build --all
-
-# Run all tests
-npm run test
-# OR
-npx nx run-many --target=test --all
+# Setup database
+npx prisma migrate dev
+npx prisma generate
 ```
 
-### Individual Application Commands
+### Development Workflow
 ```bash
-# Frontend (isr-app)
-npx nx serve isr-app     # Start dev server
-npx nx build isr-app     # Build for production
-npx nx test isr-app      # Run tests
+# From /isr-platform directory:
 
-# Backend API
-npx nx serve api         # Start API server
-npx nx build api         # Build API
+# Start all services concurrently
+npm run serve
+# OR specific service
+npx nx serve isr-app     # Frontend on port 4200
+npx nx serve api         # Backend on port 3000
+
+# Build applications
+npm run build            # Build all
+npx nx build isr-app     # Build specific app
+
+# Run tests
+npm run test             # Test all
+npx nx test isr-app      # Test specific app
+npx nx test api --watch  # Watch mode for API tests
+
+# Linting
+npx nx lint isr-app
+npx nx lint api
+```
+
+### Database Management
+```bash
+# From /isr-platform directory:
+npx prisma studio        # Open Prisma Studio GUI
+npx prisma migrate dev   # Run migrations
+npx prisma db push       # Push schema changes
+npx prisma generate      # Regenerate Prisma client
 ```
 
 ### Docker Deployment
 ```bash
-# Start all services (PostgreSQL, API, Frontend, Caddy)
-docker-compose up
-
-# Start with rebuild
-docker-compose up --build
-
-# Stop all services
-docker-compose down
+# From /isr-platform directory:
+docker-compose up        # Start all services
+docker-compose up --build # Rebuild and start
+docker-compose down      # Stop services
+docker-compose down -v   # Stop and remove volumes
 ```
-
-## Key Directories
-
-- `/isr-platform/` - Main Nx workspace
-  - `/apps/api/` - Backend API service
-  - `/apps/isr-app/` - React frontend application
-  - `/libs/` - Shared libraries
-- `/docs/` - Project documentation including PRD and architecture specs
 
 ## Technology Stack
 
-- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, Leaflet, React Router, Zustand
-- **Backend**: Express, TypeScript, Prisma ORM, PostgreSQL
-- **Testing**: Jest, React Testing Library
-- **Build Tools**: Nx, Docker, Caddy
-- **Database**: PostgreSQL 16 with PostGIS extension
+- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Leaflet, Zustand, React Router
+- **Backend:** Express.js, TypeScript, Prisma ORM, PostgreSQL/PostGIS
+- **Testing:** Jest, React Testing Library, ts-jest
+- **Build:** Nx 21.4.1, Docker, Docker Compose
+- **Gateway:** Caddy Server
 
-## Key Features Being Developed
+## Key Features
 
-1. **Kismet Log Ingestion**: Processing WiFi/Bluetooth data from Kismet SQLite logs
-2. **SDR Integration**: Support for RTL-SDR and other software-defined radio sources
-3. **RF Fusion Display**: Unified geospatial visualization of multi-protocol data
-4. **Persistence Analysis**: Detecting and scoring persistent devices across locations
-5. **REST API**: Comprehensive API for data export and integration
-
-## Testing Approach
-
-- Unit tests exist for components and services
-- Test files follow `.spec.ts` or `.spec.tsx` naming convention
-- Run tests with `npm run test` or target specific apps with `npx nx test <app-name>`
+1. **WiFi Networks Intelligence**: Detection and mapping of WiFi access points with temporal analysis
+2. **GPS Drive Detection**: Automated identification of GPS-based movement patterns
+3. **Wigle.net Integration**: API integration for expanded wireless data
+4. **Geospatial Visualization**: Interactive Leaflet maps with PostGIS backend
+5. **Multi-Protocol Support**: Kismet logs, SDR sources, custom importers
+6. **REST API**: Comprehensive endpoints for SIEM integration
 
 ## Environment Configuration
 
-Copy `.env.example` to `.env` and configure:
-- Database credentials (PostgreSQL)
-- API port configuration
-- Node environment settings
+```bash
+# Copy example configs
+cp .env.example .env
+cp .env.production.example .env.production
 
-## Important Notes
+# Required variables:
+DATABASE_URL="postgresql://user:password@localhost:5432/isr_platform"
+NODE_ENV="development"
+API_PORT=3000
+```
 
-- The platform targets deployment on Linux systems including edge devices (Raspberry Pi)
-- Designed for containerized deployment with sub-15 minute setup time
-- API-first architecture for SIEM integration
-- Focus on real-time stream processing with sub-second latency goals
+## Testing Approach
+
+- Test files use `.spec.ts` or `.spec.tsx` convention
+- Unit tests for components and services
+- Integration tests for API endpoints
+- Run with `npm test` or `npx nx test <app-name>`
+
+## Important Context
+
+- **Target Deployment:** Linux systems including edge devices (Raspberry Pi)
+- **Performance Goals:** Sub-second latency for real-time processing
+- **Setup Time:** Sub-15 minute containerized deployment
+- **API Design:** RESTful architecture for SIEM/external integration
+- **Data Sources:** Kismet SQLite logs, RTL-SDR, GPS tracks, Wigle.net API
+
+## Project Documentation
+
+- `/docs/architecture.md` - System architecture and design decisions
+- `/docs/intel-queries.sql` - 40+ intelligence SQL queries
+- `/IMPLEMENTATION_SUMMARY.md` - Completed features documentation
+- `/PRODUCTION_DEPLOYMENT.md` - Production deployment guide

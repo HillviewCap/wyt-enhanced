@@ -1,0 +1,37 @@
+# Docker Compose override for mobility tracking features
+# Use with: docker-compose -f docker-compose.yml -f docker-compose.mobility.yml up
+
+services:
+  postgres:
+    environment:
+      # Ensure PostGIS extensions are available for geospatial queries
+      POSTGRES_EXTENSIONS: 'postgis,pg_stat_statements,uuid-ossp'
+    volumes:
+      # Mount the mobility tracking initialization script
+      - ./database/init/02-mobility-tracking.sql:/docker-entrypoint-initdb.d/02-mobility-tracking.sql:ro
+      # Mount a volume for persistent mobility data
+      - mobility_data:/var/lib/postgresql/mobility
+
+  api:
+    environment:
+      # Enable mobility tracking features
+      ENABLE_MOBILITY_TRACKING: 'true'
+      MOBILITY_CONFIDENCE_THRESHOLD: '0.7'
+      MOBILITY_MIN_SSIDS: '3'
+      MOBILITY_LOCATION_THRESHOLD_METERS: '50'
+    healthcheck:
+      # Enhanced health check including mobility endpoint
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3001/health && wget --no-verbose --tries=1 --spider http://localhost:3001/api/mobility/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  frontend:
+    environment:
+      # Enable mobility features in the UI
+      REACT_APP_ENABLE_MOBILITY: 'true'
+      REACT_APP_MOBILITY_DEFAULT_HOURS: '168'
+
+volumes:
+  mobility_data:
+    driver: local

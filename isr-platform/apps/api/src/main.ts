@@ -8,6 +8,7 @@ import drivesRoutes from './app/routes/drives.routes';
 import { surveillanceRoutes } from './app/routes/surveillance.routes';
 import intelligenceRoutes from './app/routes/intelligence.routes';
 import rfsensorRoutes from './app/routes/rfsensor.routes';
+import mobilityRoutes from './app/routes/mobility.routes';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -34,6 +35,7 @@ app.use('/api/drives', drivesRoutes);
 app.use('/api/surveillance', surveillanceRoutes);
 app.use('/api/intelligence', intelligenceRoutes);
 app.use('/api/rfsensor', rfsensorRoutes);
+app.use('/api/mobility', mobilityRoutes);
 
 // Global error handler
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {

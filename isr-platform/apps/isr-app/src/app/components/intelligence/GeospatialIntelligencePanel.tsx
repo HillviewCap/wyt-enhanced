@@ -32,15 +32,20 @@ interface WigleStats {
 
 export function GeospatialIntelligencePanel({ mapBounds, onDataUpdate }: GeospatialIntelligencePanelProps) {
   const [isVisible, setIsVisible] = useState(false);
-  const [activeTab, setActiveTab] = useState<'coverage' | 'density' | 'wigle' | 'heatmap'>('coverage');
+  const [activeTab, setActiveTab] = useState<'coverage' | 'density' | 'wigle' | 'heatmap' | 'mobility'>('coverage');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   // Data states
   const [signalZones, setSignalZones] = useState<SignalZone[]>([]);
   const [densityGrid, setDensityGrid] = useState<DensityCell[]>([]);
   const [wigleStats, setWigleStats] = useState<WigleStats | null>(null);
   const [heatmapData, setHeatmapData] = useState<any[]>([]);
+  const [mobilityStats, setMobilityStats] = useState<any>(null);
+  const [trackingMac, setTrackingMac] = useState<string>('');
+
+  // Track if data has been fetched for each tab to prevent refetching
+  const [fetchedTabs, setFetchedTabs] = useState<Set<string>>(new Set());
 
   // Fetch signal coverage analysis
   const fetchSignalCoverage = useCallback(async () => {
@@ -153,6 +158,47 @@ export function GeospatialIntelligencePanel({ mapBounds, onDataUpdate }: Geospat
     }
   }, [mapBounds, onDataUpdate]);
 
+  // Fetch mobility statistics
+  const fetchMobilityStats = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/mobility/analysis?type=summary&hours_back=168');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      setMobilityStats(data.summary);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to fetch mobility stats';
+      setError(errorMsg);
+      console.error('Failed to fetch mobility stats:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Track a specific device
+  const handleTrackDevice = useCallback(() => {
+    if (!trackingMac || trackingMac.trim() === '') {
+      setError('Please enter a MAC address to track');
+      return;
+    }
+
+    // Open the device tracking panel by setting the tracking MAC in the parent
+    const parentElement = document.querySelector('[data-tracking-mac-setter]');
+    if (parentElement) {
+      const event = new CustomEvent('track-device', { detail: { mac: trackingMac } });
+      parentElement.dispatchEvent(event);
+    }
+
+    // For now, just show an alert that tracking has started
+    alert(`Tracking initiated for device: ${trackingMac}`);
+    setTrackingMac('');
+  }, [trackingMac]);
+
   // Enrich local networks with Wigle data
   const enrichWithWigle = useCallback(async () => {
     if (!mapBounds) {
@@ -195,9 +241,15 @@ export function GeospatialIntelligencePanel({ mapBounds, onDataUpdate }: Geospat
     }
   }, [mapBounds, fetchWigleStats]);
 
-  // Load initial data based on active tab
+  // Load initial data based on active tab (only fetch once per tab)
   useEffect(() => {
     if (!isVisible) return;
+
+    // Check if we've already fetched this tab's data
+    if (fetchedTabs.has(activeTab)) return;
+
+    // Mark this tab as fetched
+    setFetchedTabs(prev => new Set([...prev, activeTab]));
 
     switch (activeTab) {
       case 'coverage':
@@ -212,8 +264,13 @@ export function GeospatialIntelligencePanel({ mapBounds, onDataUpdate }: Geospat
       case 'heatmap':
         fetchHeatmapData();
         break;
+      case 'mobility':
+        fetchMobilityStats();
+        break;
     }
-  }, [activeTab, isVisible, fetchSignalCoverage, fetchDensityGrid, fetchWigleStats, fetchHeatmapData]);
+    // Intentionally exclude fetch functions from deps to prevent loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isVisible]);
 
   const getSignalZoneColor = (zone: string) => {
     if (zone.includes('Excellent')) return 'bg-green-500';
@@ -258,7 +315,8 @@ export function GeospatialIntelligencePanel({ mapBounds, onDataUpdate }: Geospat
               { key: 'coverage', label: '📶 Coverage' },
               { key: 'density', label: '📍 Density' },
               { key: 'wigle', label: '🌐 Wigle' },
-              { key: 'heatmap', label: '🔥 Heatmap' }
+              { key: 'heatmap', label: '🔥 Heatmap' },
+              { key: 'mobility', label: '🚶 Mobility' }
             ].map((tab) => (
               <button
                 key={tab.key}
@@ -423,6 +481,69 @@ export function GeospatialIntelligencePanel({ mapBounds, onDataUpdate }: Geospat
                         </div>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* Mobility Tab */}
+                {activeTab === 'mobility' && (
+                  <div className="space-y-4">
+                    <h4 className="font-medium text-gray-800">Client Mobility Tracking</h4>
+
+                    {mobilityStats && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-blue-50 rounded-lg p-3">
+                          <div className="text-xs text-blue-600 font-medium">Signatures</div>
+                          <div className="text-xl font-bold text-gray-900">{mobilityStats.totalSignatures}</div>
+                        </div>
+                        <div className="bg-green-50 rounded-lg p-3">
+                          <div className="text-xs text-green-600 font-medium">Active Devices</div>
+                          <div className="text-xl font-bold text-gray-900">{mobilityStats.activeDevices}</div>
+                        </div>
+                        <div className="bg-purple-50 rounded-lg p-3">
+                          <div className="text-xs text-purple-600 font-medium">Mobility Events</div>
+                          <div className="text-xl font-bold text-gray-900">{mobilityStats.totalMobilityEvents}</div>
+                        </div>
+                        <div className="bg-orange-50 rounded-lg p-3">
+                          <div className="text-xs text-orange-600 font-medium">Randomized</div>
+                          <div className="text-xl font-bold text-gray-900">{mobilityStats.randomizedDevices}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-gray-700">Track Device by MAC</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={trackingMac}
+                          onChange={(e) => setTrackingMac(e.target.value)}
+                          placeholder="AA:BB:CC:DD:EE:FF"
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        />
+                        <button
+                          onClick={handleTrackDevice}
+                          disabled={!trackingMac.trim()}
+                          className="px-4 py-2 bg-purple-500 hover:bg-purple-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors"
+                        >
+                          Track
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="text-xs text-gray-500 space-y-1">
+                      <p>• Tracks device movement across locations</p>
+                      <p>• Detects MAC address randomization</p>
+                      <p>• Analyzes movement patterns and speed</p>
+                      <p>• Identifies frequently visited hotspots</p>
+                    </div>
+
+                    <button
+                      onClick={fetchMobilityStats}
+                      disabled={loading}
+                      className="w-full bg-purple-500 hover:bg-purple-600 disabled:bg-gray-300 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+                    >
+                      {loading ? 'Refreshing...' : 'Refresh Stats'}
+                    </button>
                   </div>
                 )}
               </>

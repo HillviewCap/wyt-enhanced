@@ -3,6 +3,12 @@ import { prisma } from '../data-access';
 
 const router = Router();
 
+const safePromise = <T>(promise: Promise<T>): Promise<[T | null, any | null]> => {
+  return promise
+    .then(data => [data, null] as [T, null])
+    .catch(error => [null, error] as [null, any]);
+};
+
 // POST /api/drives/refresh - Refresh drive sessions from wardriving_sessions table
 router.post('/refresh', async (req: Request, res: Response) => {
   try {
@@ -40,7 +46,7 @@ router.get('/sessions', async (req: Request, res: Response) => {
     const { limit = '50', offset = '0', start_date, end_date } = req.query;
 
     const whereClause: any = {};
-    
+
     if (start_date || end_date) {
       whereClause.startTime = {};
       if (start_date) whereClause.startTime.gte = new Date(start_date as string);
@@ -146,16 +152,16 @@ router.get('/sessions/:id/networks', async (req: Request, res: Response) => {
       first_seen: Date | null;
       client_count: number;
     }>>`
-      SELECT 
-        n.id, 
-        n.bssid::text as bssid, 
-        n.ssid, 
-        n.security_type, 
-        n.channel, 
-        n.signal_strength, 
-        n.vendor, 
-        n.latitude, 
-        n.longitude, 
+      SELECT
+        n.id,
+        n.bssid::text as bssid,
+        n.ssid,
+        n.security_type,
+        n.channel,
+        n.signal_strength,
+        n.vendor,
+        n.latitude,
+        n.longitude,
         n.first_seen,
         COUNT(c.id)::integer as client_count
       FROM wifi_networks n
@@ -229,21 +235,21 @@ router.delete('/sessions/:id', async (req: Request, res: Response) => {
 router.get('/stats', async (req: Request, res: Response) => {
   try {
     const [
-      totalSessions,
-      totalDistanceResult,
-      totalAreaResult,
-      recentSessions,
+      [totalSessions, totalSessionsError],
+      [totalDistanceResult, totalDistanceError],
+      [totalAreaResult, totalAreaError],
+      [recentSessions, recentSessionsError],
     ] = await Promise.all([
-      prisma.wardrivingSession.count(),
-      prisma.wardrivingSession.aggregate({
+      safePromise(prisma.wardrivingSession.count()),
+      safePromise(prisma.wardrivingSession.aggregate({
         _sum: { totalDistance: true },
         _avg: { totalDistance: true },
-      }),
-      prisma.wardrivingSession.aggregate({
+      })),
+      safePromise(prisma.wardrivingSession.aggregate({
         _sum: { areaCovered: true },
         _avg: { areaCovered: true },
-      }),
-      prisma.wardrivingSession.findMany({
+      })),
+      safePromise(prisma.wardrivingSession.findMany({
         take: 50,
         orderBy: { startTime: 'desc' },
         select: {
@@ -255,16 +261,26 @@ router.get('/stats', async (req: Request, res: Response) => {
           networksDiscovered: true,
           devicesDiscovered: true,
         },
-      }),
+      })),
     ]);
 
+    if (totalSessionsError || totalDistanceError || totalAreaError || recentSessionsError) {
+      console.error(`[${new Date().toISOString()}] ERROR: Failed to fetch wardriving stats components:`, {
+        totalSessionsError,
+        totalDistanceError,
+        totalAreaError,
+        recentSessionsError,
+      });
+      return res.status(500).json({ error: 'Partial or complete failure in fetching stats' });
+    }
+
     return res.status(200).json({
-      totalSessions,
-      totalDistance: totalDistanceResult._sum.totalDistance ? Number(totalDistanceResult._sum.totalDistance) : 0,
-      avgDistance: totalDistanceResult._avg.totalDistance ? Number(totalDistanceResult._avg.totalDistance) : 0,
-      totalAreaCovered: totalAreaResult._sum.areaCovered ? Number(totalAreaResult._sum.areaCovered) : 0,
-      avgAreaCovered: totalAreaResult._avg.areaCovered ? Number(totalAreaResult._avg.areaCovered) : 0,
-      recentSessions: recentSessions.map(session => ({
+      totalSessions: totalSessions ?? 0,
+      totalDistance: totalDistanceResult?._sum.totalDistance ? Number(totalDistanceResult._sum.totalDistance) : 0,
+      avgDistance: totalDistanceResult?._avg.totalDistance ? Number(totalDistanceResult._avg.totalDistance) : 0,
+      totalAreaCovered: totalAreaResult?._sum.areaCovered ? Number(totalAreaResult._sum.areaCovered) : 0,
+      avgAreaCovered: totalAreaResult?._avg.areaCovered ? Number(totalAreaResult._avg.areaCovered) : 0,
+      recentSessions: (recentSessions || []).map(session => ({
         id: session.id,
         sessionName: session.sessionName,
         startTime: session.startTime.toISOString(),
